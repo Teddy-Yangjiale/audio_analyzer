@@ -1,0 +1,12 @@
+﻿build/
+bin/
+*.exe
+*.obj
+*.pdb
+*.cmake
+*.bat
+CMakePresets.json
+CMakeUserPresets.json
+.vscode/
+.vs/
+.idea/

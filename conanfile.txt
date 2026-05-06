@@ -1,0 +1,9 @@
+[requires]
+ffmpeg/4.4.4
+fftw/3.3.10
+crowcpp-crow/1.1.0
+nlohmann_json/3.11.2
+
+[generators]
+CMakeDeps
+CMakeToolchain
