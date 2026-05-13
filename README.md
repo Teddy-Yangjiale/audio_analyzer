@@ -1,115 +1,185 @@
-# 音频分析核心引擎 (C++) / Audio Analyzer Core
+# Audio Analyzer — C++ 音频特征提取引擎
 
 ## 项目简介
 
-本项目是一个基于 C++17 开发的高性能音频特征提取工具。其核心功能是读取原始 `.wav` 格式音频文件，通过数字信号处理（DSP）算法提取梅尔频率倒谱系数（MFCC）及其一阶差分（Delta）特征。该工具输出标准化的 JSON 格式数据，旨在为机器学习流水线或实时音频分析任务提供高效、可靠的底层支持。
+基于 C++17 的高性能音频特征提取工具。支持任意 FFmpeg 兼容格式（MP3 / WAV / FLAC / AAC 等），
+通过数字信号处理提取多维度时域、频域特征，输出标准化 JSON。提供 **CLI 命令行** 和 **HTTP Server** 两种模式，
+适合机器学习流水线、音频检索、可视化分析等场景。
 
 ---
 
 ## 主要特性
 
-* **高性能运算**：核心算法基于 FFTW3 库实现，确保快速傅里叶变换（FFT）的执行效率。
-* **工业级标准**：利用 libsndfile 库处理音频输入输出，支持多种采样率和位深度。
-* **全面的特征提取**：支持提取 13 维原始 MFCC 和 13 维一阶差分特征（共计 26 维特征向量）。
-* **标准化数据输出**：结果以 JSON 格式输出，方便与 Python、JavaScript 或其他高级语言编写的程序无缝对接。
-* **现代工程化构建**：采用 Conan 2.0 管理第三方依赖，结合 Ninja 构建系统，实现极速编译和跨平台兼容。
+- **广泛格式支持**：基于 FFmpeg，支持 MP3 / WAV / FLAC / AAC / OGG 等主流音频格式
+- **完整特征集**（每帧 60+ 维）：
+  - MFCC (13) + Delta (13) + Delta-Delta (13) + Log Energy
+  - 时域：RMS、ZCR、Peak、Crest Factor
+  - 频谱：Centroid、Rolloff、Flux、Bandwidth、Flatness、Contrast (6 bands)
+  - 色度图 (12)
+  - FFT 功率谱
+- **DSP 管线**：预加重 → Hann 窗 → 50% 重叠 STFT → Mel 滤波器组 → DCT → Liftering
+- **CLI 可配置**：`--features` 按需选择，`--fft-size` / `--window` / `--mfcc-coeffs` 等参数可调
+- **HTTP Server**：`POST /upload` 接口，接收音频文件返回 JSON，支持 CORS
+- **模块化架构**：core / features / config / utils 分层，RAII 封装 FFmpeg + FFTW3
 
 ---
 
 ## 技术栈
 
-* **编程语言**：C++17
-* **构建系统**：CMake (>= 3.15) + Ninja
-* **包管理器**：Conan 2.0
-* **核心库依赖**：
-    * **FFTW3**：用于执行快速傅里叶变换。
-    * **libsndfile**：用于音频文件的读取、解码与元数据处理。
-    * **nlohmann_json**：用于特征数据的 JSON 序列化输出。
+| 组件 | 用途 |
+|------|------|
+| C++17 | 编程语言 |
+| CMake + Ninja | 构建系统 |
+| Conan 2.x | 包管理器 |
+| FFmpeg 4.4.4 | 音频解码、重采样 |
+| FFTW3 3.3.10 | 快速傅里叶变换 |
+| CrowCpp 1.1.0 | HTTP 服务器 |
+| nlohmann/json 3.11.2 | JSON 序列化 |
 
 ---
 
 ## 环境准备
 
-在开始编译前，请确保系统中已安装以下工具：
-
-* CMake (3.15 或更高版本)
-* Conan 2.0
-* Ninja (推荐的构建后端)
-* C++17 兼容的编译器 (如 MSVC 2019+, GCC 9+, Clang 10+)
+- CMake >= 3.15
+- Conan 2.x
+- C++17 编译器（MSVC 2019+ / GCC 9+ / Clang 10+）
+- Ninja（推荐）
 
 ---
 
-## 编译指南
-
-本项目使用 Conan 自动处理库依赖。请在项目根目录下执行以下步骤：
+## 编译
 
 ```bash
-# 1. 安装依赖并生成构建配置文件
-conan install . --output-folder=build --build=missing
+# 1. 安装 Conan 依赖（生成 conan_toolchain.cmake 到项目根目录）
+conan install . --output-folder=. --build=missing
 
-# 2. 配置 CMake 项目 (推荐使用 Ninja 生成器)
-cmake .. -G "Ninja" -DCMAKE_TOOLCHAIN_FILE=conan_toolchain.cmake -DCMAKE_BUILD_TYPE=Release
+# 2. 配置 CMake（指定 Conan toolchain）
+cmake -S . -B build3 -DCMAKE_TOOLCHAIN_FILE=conan_toolchain.cmake -G Ninja -DCMAKE_BUILD_TYPE=Release
 
-# 3. 执行编译
-ninja
+# 3. 编译
+cmake --build build3 --config Release
+
+# 4. 运行测试（可选）
+./build3/test_features.exe
 ```
-
-编译完成后，项目目录下将生成可执行文件 `analyzer.exe` (或 `analyzer`)。
 
 ---
 
 ## 使用说明
 
-调用编译生成的程序并指定音频文件路径，分析结果将直接打印至标准输出（stdout）：
+### CLI 模式
 
-```powershell
-./analyzer.exe "path/to/your/audio.wav"
+```bash
+# 默认全特征分析
+./build3/analyzer.exe music.mp3
+
+# 只提取 MFCC + 时域特征
+./build3/analyzer.exe --features mfcc,td music.mp3
+
+# 自定义 FFT 参数
+./build3/analyzer.exe --fft-size 2048 --window hamming --mfcc-coeffs 20 music.mp3
+
+# 查看所有选项
+./build3/analyzer.exe --help
 ```
 
-### 输出数据示例
+### Server 模式
+
+```bash
+./build3/analyzer.exe --server
+# 启动后访问 http://localhost:8080
+# POST /upload  字段名: audio_file
+```
+
+### CLI 参数
+
+| 参数 | 说明 | 默认值 |
+|------|------|--------|
+| `--features <list>` | 选择特征：mfcc,fft,td,spectral,chroma（逗号分隔） | 全开 |
+| `--fft-size <n>` | FFT 窗大小 | 1024 |
+| `--hop-size <n>` | 帧移 | fft_size/2 |
+| `--sample-rate <hz>` | 目标采样率 | 44100 |
+| `--mfcc-coeffs <n>` | MFCC 系数个数 | 13 |
+| `--pre-emphasis <f>` | 预加重系数 | 0.97 |
+| `--window <name>` | 窗类型：hann / hamming / blackman / rectangular | hann |
+| `--fft-bins <n>` | 输出 FFT bin 数 | 64 |
+| `--server` | HTTP Server 模式 | — |
+| `--help` | 显示帮助 | — |
+
+---
+
+## 输出 JSON 格式
+
 ```json
 [
   {
-    "frame": 0,
-    "mfcc": [12.45, -3.21, 0.54, 0.12, ... ]
-  },
-  {
-    "frame": 1,
-    "mfcc": [11.89, -2.98, 0.45, 0.08, ... ]
+    "mfcc":         [-316.1, -91.2, 70.8, ...],
+    "mfcc_delta":   [1.2, -0.8, 0.3, ...],
+    "mfcc_delta2":  [0.1, 0.0, -0.1, ...],
+    "energy":       4.69,
+    "fft":          [2.0e-7, 5.2e-8, ...],
+    "centroid":     18853.5,
+    "rolloff":      19681.3,
+    "bandwidth":    1004.7,
+    "flatness":     0.0023,
+    "flux":         0.0,
+    "contrast":     [8.2, 10.1, 7.5, ...],
+    "chroma":       [0.12, 0.05, 0.08, ...],
+    "rms":          0.00037,
+    "zcr":          0.85,
+    "peak":         0.0011,
+    "crest":        2.89
   }
 ]
 ```
 
 ---
 
-## 技术实现原理
+## 处理管线
 
-本引擎遵循标准的语音信号处理流程：
-
-1.  **预加重 (Pre-emphasis)**：通过高通滤波器平衡频谱，增强高频部分的能量。
-2.  **分帧与加窗 (Framing & Windowing)**：将连续信号切分为短帧，并应用 **Hamming 窗** 以减少频谱泄漏。
-3.  **快速傅里叶变换 (FFT)**：将时域信号转换为频域能量分布。
-4.  **梅尔滤波器组 (Mel Filter Bank)**：应用梅尔刻度滤波器，模拟人类听觉对不同频率的感知灵敏度。
-5.  **离散余弦变换 (DCT)**：对梅尔能量的对数进行变换，提取倒谱系数并实现特征去相关。
+```
+音频文件 → FFmpeg 解码 → 重采样 (mono 32-bit float) → 预加重
+→ 分帧 + Hann 窗 → FFTW3 FFT → 功率谱
+→ Mel 滤波器组 → log → DCT → Liftering → MFCC + Delta + Delta-Delta
+→ 频谱特征 (Centroid / Rolloff / Flux / Bandwidth / Flatness / Contrast)
+→ 色度图 (12 pitch classes)
+→ 时域特征 (RMS / ZCR / Peak / Crest)
+→ JSON 输出
+```
 
 ---
 
 ## 项目结构
 
-```text
-.
-├── main.cpp            # 核心数字信号处理与特征提取逻辑
-├── CMakeLists.txt      # CMake 构建配置
-├── conanfile.txt       # Conan 依赖声明
-├── .gitignore          # Git 忽略规则
-└── README.md           # 项目文档
+```
+audio_analyzer/
+├── main.cpp                          # CLI + HTTP Server 入口
+├── CMakeLists.txt                    # 构建配置
+├── conanfile.txt                     # Conan 依赖声明
+├── CHANGELOG.md                      # 版本变更
+├── test.mp3                          # 测试音频
+├── src/
+│   ├── core/
+│   │   ├── audio_decoder.h/.cpp      # FFmpeg RAII 解码 + 重采样
+│   │   └── fft_engine.h/.cpp         # FFTW3 RAII 封装 + STFT
+│   ├── features/
+│   │   ├── mfcc_extractor.h/.cpp     # MFCC 管线 (预加重/liftering/delta)
+│   │   ├── time_domain_features.h    # RMS / ZCR / Peak / Crest
+│   │   ├── spectral_features.h       # Centroid / Rolloff / Flux 等
+│   │   └── chroma_extractor.h        # 12 维色度图
+│   ├── config/
+│   │   └── config.h                  # CLI 参数解析 + 特征选择
+│   └── utils/
+│       └── window_functions.h        # Hann / Hamming / Blackman 等
+└── tests/
+    └── test_features.cpp             # 24 个单元测试
 ```
 
 ---
 
 ## 开源协议
 
-本项目基于 **MIT License** 协议开源。
+MIT License
 
 ---
 
